@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell, RiskBadge } from "@/components/AppShell";
 import { SAMPLE_INSPECTIONS, HAZARD_TRENDS, AREA_BREAKDOWN, riskFromScore, riskScore } from "@/lib/safety-data";
-import { usePersona } from "@/lib/persona";
+import { useAuth } from "@/lib/auth";
 import { AlertTriangle, ShieldCheck, Activity, TrendingUp, ScanLine, ArrowRight } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -19,7 +19,8 @@ export const Route = createFileRoute("/")({
 });
 
 function DashboardPage() {
-  const { persona } = usePersona();
+  const { primaryRole } = useAuth();
+  const persona = primaryRole ?? "inspector";
 
   const allHazards = SAMPLE_INSPECTIONS.flatMap((i) => i.hazards);
   const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 } as Record<string, number>;
@@ -39,7 +40,7 @@ function DashboardPage() {
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-xs font-semibold uppercase tracking-widest text-primary">
-            {persona === "manager" ? "EHSS Manager View" : "Inspector View"}
+            {persona === "manager" ? "EHSS Manager View" : persona === "admin" ? "Administrator View" : "Inspector View"}
           </div>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-foreground">Safety Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
