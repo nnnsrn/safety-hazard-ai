@@ -40,7 +40,7 @@ function DashboardPage() {
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-xs font-semibold uppercase tracking-widest text-primary">
-            {persona === "manager" ? "EHSS Manager View" : "Inspector View"}
+            {persona === "manager" ? "EHSS Manager View" : persona === "admin" ? "Administrator View" : "Inspector View"}
           </div>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-foreground">Safety Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
