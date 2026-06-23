@@ -78,14 +78,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "Mattel EHSS SafetyVision" },
+      { name: "description", content: "AI-powered safety hazard detection and reporting for Mattel manufacturing operations." },
+      { name: "author", content: "Mattel EHSS" },
+      { property: "og:title", content: "Mattel EHSS SafetyVision" },
+      { property: "og:description", content: "AI-powered safety hazard detection and reporting." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:site", content: "@Mattel" },
     ],
     links: [
       {
