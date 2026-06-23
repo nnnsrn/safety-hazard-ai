@@ -4,12 +4,14 @@ import { usePersona } from "@/lib/persona";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 
-const NAV = [
+import type { Persona } from "@/lib/safety-data";
+
+const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; roles: Persona[] }> = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["inspector", "manager"] },
   { to: "/analyze", label: "Hazard Analyzer", icon: ScanLine, roles: ["inspector"] },
   { to: "/reports", label: "Reports", icon: FileText, roles: ["inspector", "manager"] },
   { to: "/knowledge", label: "EHSS Knowledge", icon: BookOpen, roles: ["inspector", "manager"] },
-] as const;
+];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { persona, setPersona } = usePersona();
