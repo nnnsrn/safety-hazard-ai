@@ -82,10 +82,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "description", content: "AI-powered safety hazard detection and reporting for Mattel manufacturing operations." },
       { name: "author", content: "Mattel EHSS" },
       { property: "og:title", content: "Mattel EHSS SafetyVision" },
-      { property: "og:description", content: "AI-powered safety hazard detection and reporting." },
+      { property: "og:description", content: "AI-powered safety hazard detection and reporting for Mattel manufacturing operations." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Mattel" },
+      { name: "twitter:title", content: "Mattel EHSS SafetyVision" },
+      { name: "twitter:description", content: "AI-powered safety hazard detection and reporting for Mattel manufacturing operations." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/3d39ced0-fe24-4768-926e-17939bdb49ba/id-preview-345b8feb--901f6cbe-1c6e-413a-9234-5123b1e725e1.lovable.app-1782178443500.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/3d39ced0-fe24-4768-926e-17939bdb49ba/id-preview-345b8feb--901f6cbe-1c6e-413a-9234-5123b1e725e1.lovable.app-1782178443500.png" },
     ],
     links: [
       {
