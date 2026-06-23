@@ -19,7 +19,8 @@ export const Route = createFileRoute("/")({
 });
 
 function DashboardPage() {
-  const { persona } = usePersona();
+  const { primaryRole } = useAuth();
+  const persona = primaryRole ?? "inspector";
 
   const allHazards = SAMPLE_INSPECTIONS.flatMap((i) => i.hazards);
   const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 } as Record<string, number>;
