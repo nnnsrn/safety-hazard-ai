@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell, RiskBadge } from "@/components/AppShell";
 import { SAMPLE_INSPECTIONS, HAZARD_TRENDS, AREA_BREAKDOWN, riskFromScore, riskScore } from "@/lib/safety-data";
-import { usePersona } from "@/lib/persona";
+import { useAuth } from "@/lib/auth";
 import { AlertTriangle, ShieldCheck, Activity, TrendingUp, ScanLine, ArrowRight } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
