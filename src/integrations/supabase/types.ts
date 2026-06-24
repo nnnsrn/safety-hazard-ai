@@ -14,6 +14,66 @@ export type Database = {
   }
   public: {
     Tables: {
+      inspections: {
+        Row: {
+          area: string
+          category: number
+          corrective_action: string | null
+          created_at: string
+          detected_objects: Json
+          env_hazards: Json
+          id: string
+          image_data_url: string | null
+          inspector_email: string
+          inspector_id: string
+          inspector_name: string
+          missing_ppe: Json
+          notes: string | null
+          risk_score: number
+          severity: string
+          source: string
+          status: string
+        }
+        Insert: {
+          area: string
+          category: number
+          corrective_action?: string | null
+          created_at?: string
+          detected_objects?: Json
+          env_hazards?: Json
+          id?: string
+          image_data_url?: string | null
+          inspector_email: string
+          inspector_id: string
+          inspector_name: string
+          missing_ppe?: Json
+          notes?: string | null
+          risk_score: number
+          severity: string
+          source?: string
+          status: string
+        }
+        Update: {
+          area?: string
+          category?: number
+          corrective_action?: string | null
+          created_at?: string
+          detected_objects?: Json
+          env_hazards?: Json
+          id?: string
+          image_data_url?: string | null
+          inspector_email?: string
+          inspector_id?: string
+          inspector_name?: string
+          missing_ppe?: Json
+          notes?: string | null
+          risk_score?: number
+          severity?: string
+          source?: string
+          status?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -94,6 +154,7 @@ export type Database = {
         Args: { _reason: string; _user_id: string }
         Returns: undefined
       }
+      seed_demo_accounts: { Args: never; Returns: Json }
     }
     Enums: {
       account_status: "pending" | "active" | "rejected"

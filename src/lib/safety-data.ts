@@ -1,157 +1,214 @@
-export type Persona = "inspector" | "manager";
+// ============================================================
+// EHSS SafetyVision — Strict 5-Category Hazard Scoring System
+// ============================================================
 
-export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type PpeKey = "helmet" | "vest" | "glasses" | "gloves" | "shoes";
+export type EnvHazardKey = "wet_floor" | "obstacle" | "electrical" | "unsafe_area" | "fire" | "spill";
 
-export type Hazard = {
-  id: string;
-  label: string;
-  category: string;
-  confidence: number;
-  bbox: { x: number; y: number; w: number; h: number }; // % of image
-  severity: number; // 1-5
-  likelihood: number; // 1-5
-  ehssRef: string;
-  ehssText: string;
-  correctiveAction: string;
-  preventiveAction: string;
-  owner: string;
-  dueInDays: number;
+export const PPE_LABEL: Record<PpeKey, string> = {
+  helmet: "Helmet",
+  vest: "Safety Vest",
+  glasses: "Safety Glasses",
+  gloves: "Gloves",
+  shoes: "Safety Shoes",
 };
 
-export type Inspection = {
-  id: string;
-  date: string;
-  area: string;
-  inspector: string;
-  imageLabel: string;
-  hazards: Hazard[];
+export const ENV_LABEL: Record<EnvHazardKey, string> = {
+  wet_floor: "Wet Floor",
+  obstacle: "Obstacle / Blocked Walkway",
+  electrical: "Open Electrical Panel",
+  unsafe_area: "Unsafe Area",
+  fire: "Fire Hazard",
+  spill: "Chemical Spill",
 };
 
-export function riskFromScore(score: number): RiskLevel {
-  if (score >= 17) return "CRITICAL";
-  if (score >= 11) return "HIGH";
-  if (score >= 6) return "MEDIUM";
-  return "LOW";
+// Scoring weights (sum capped at 100)
+export const PPE_WEIGHT: Record<PpeKey, number> = {
+  helmet: 20,
+  shoes: 20,
+  vest: 15,
+  gloves: 10,
+  glasses: 10,
+};
+
+export const ENV_WEIGHT: Record<EnvHazardKey, number> = {
+  electrical: 30,
+  unsafe_area: 25,
+  fire: 25,
+  spill: 20,
+  wet_floor: 20,
+  obstacle: 15,
+};
+
+export type HazardCategory = 1 | 2 | 3 | 4 | 5;
+export type RiskStatus = "SAFE" | "WARNING" | "MODERATE" | "HIGH RISK" | "CRITICAL";
+
+export type CategoryDef = {
+  id: HazardCategory;
+  status: RiskStatus;
+  severity: string;
+  description: string;
+  colorVar: string; // CSS variable to use
+  badgeClass: string;
+  action: string;
+};
+
+export const CATEGORIES: Record<HazardCategory, CategoryDef> = {
+  1: {
+    id: 1,
+    status: "SAFE",
+    severity: "Low",
+    description: "Full PPE compliance, no hazards detected.",
+    colorVar: "var(--risk-low)",
+    badgeClass: "bg-risk-low/15 text-risk-low border-risk-low/40",
+    action: "No corrective action required.",
+  },
+  2: {
+    id: 2,
+    status: "WARNING",
+    severity: "Low–Moderate",
+    description: "Single PPE missing.",
+    colorVar: "var(--risk-medium)",
+    badgeClass: "bg-risk-medium/15 text-risk-medium border-risk-medium/40",
+    action: "Ensure full PPE compliance before entry.",
+  },
+  3: {
+    id: 3,
+    status: "MODERATE",
+    severity: "Medium",
+    description: "Multiple minor violations or single environmental hazard.",
+    colorVar: "var(--risk-medium)",
+    badgeClass: "bg-orange-500/15 text-orange-600 border-orange-500/40 dark:text-orange-400",
+    action: "Fix hazard before continuing work.",
+  },
+  4: {
+    id: 4,
+    status: "HIGH RISK",
+    severity: "High",
+    description: "Serious PPE violations or dangerous environmental condition.",
+    colorVar: "var(--risk-high)",
+    badgeClass: "bg-risk-high/15 text-risk-high border-risk-high/40",
+    action: "Immediate supervisor intervention required.",
+  },
+  5: {
+    id: 5,
+    status: "CRITICAL",
+    severity: "Critical",
+    description: "Multiple severe hazards requiring immediate stop-work action.",
+    colorVar: "var(--risk-critical)",
+    badgeClass: "bg-risk-critical/15 text-risk-critical border-risk-critical/40",
+    action: "STOP WORK IMMEDIATELY.",
+  },
+};
+
+export type ScoreResult = {
+  score: number;
+  category: HazardCategory;
+  status: RiskStatus;
+  severity: string;
+  action: string;
+  missingPpe: PpeKey[];
+  envHazards: EnvHazardKey[];
+};
+
+/**
+ * Score & classify per the strict rubric.
+ * Score = sum of weights, capped at 100.
+ * Category is derived first from rule-based classification, then score breakpoints.
+ */
+export function classify(missingPpe: PpeKey[], envHazards: EnvHazardKey[]): ScoreResult {
+  let score = 0;
+  for (const p of missingPpe) score += PPE_WEIGHT[p];
+  for (const e of envHazards) score += ENV_WEIGHT[e];
+  if (score > 100) score = 100;
+
+  let category: HazardCategory;
+
+  const ppeCount = missingPpe.length;
+  const envCount = envHazards.length;
+
+  if (ppeCount === 0 && envCount === 0) category = 1;
+  else if (ppeCount >= 1 && envCount >= 1 && (ppeCount >= 2 || score >= 60)) category = 5;
+  else if (envCount >= 1 && (envHazards.some((h) => ENV_WEIGHT[h] >= 25))) category = 4;
+  else if (ppeCount >= 3) category = 4;
+  else if (ppeCount >= 2 || envCount >= 1) category = 3;
+  else category = 2;
+
+  // Score-based escalation (rule of thumb)
+  if (score >= 81) category = 5;
+  else if (score >= 61 && category < 4) category = 4;
+  else if (score >= 41 && category < 3) category = 3;
+
+  const def = CATEGORIES[category];
+  return {
+    score,
+    category,
+    status: def.status,
+    severity: def.severity,
+    action: def.action,
+    missingPpe,
+    envHazards,
+  };
 }
 
-export function riskScore(h: Hazard) {
-  return h.severity * h.likelihood;
+export function correctiveActionFor(r: ScoreResult): string {
+  const parts: string[] = [];
+  if (r.missingPpe.length) {
+    parts.push(`Provide and require: ${r.missingPpe.map((p) => PPE_LABEL[p]).join(", ")}.`);
+  }
+  if (r.envHazards.length) {
+    parts.push(`Mitigate: ${r.envHazards.map((e) => ENV_LABEL[e]).join(", ")}.`);
+  }
+  if (r.category >= 4) parts.push("Notify supervisor immediately.");
+  if (r.category === 5) parts.push("STOP WORK until corrective measures are verified.");
+  if (!parts.length) parts.push("Maintain current safety practices.");
+  return parts.join(" ");
 }
 
-export const SAMPLE_HAZARDS: Hazard[] = [
-  {
-    id: "h1",
-    label: "Missing Helmet",
-    category: "PPE Violation",
-    confidence: 0.95,
-    bbox: { x: 38, y: 12, w: 18, h: 22 },
-    severity: 5,
-    likelihood: 4,
-    ehssRef: "Mattel EHSS Std. 4.2 — Head Protection",
-    ehssText:
-      "All personnel in designated production zones shall wear ANSI Z89.1 compliant hard hats. Supervisors must verify PPE compliance at shift start.",
-    correctiveAction:
-      "Stop work, issue and require hard hat before resuming. Coach worker and log observation.",
-    preventiveAction:
-      "Post PPE signage at zone entry. Add PPE check to daily pre-shift huddle.",
-    owner: "Line Supervisor",
-    dueInDays: 1,
+// EHSS standards mapping
+export const EHSS_REFS: Partial<Record<PpeKey | EnvHazardKey, { ref: string; text: string }>> = {
+  helmet: {
+    ref: "Mattel EHSS Std. 4.2 — Head Protection",
+    text: "All personnel in designated production zones shall wear ANSI Z89.1 compliant hard hats.",
   },
-  {
-    id: "h2",
-    label: "Blocked Walkway",
-    category: "Housekeeping",
-    confidence: 0.88,
-    bbox: { x: 8, y: 55, w: 42, h: 30 },
-    severity: 3,
-    likelihood: 4,
-    ehssRef: "Mattel EHSS Std. 7.1 — Egress & Walkways",
-    ehssText:
-      "Walkways and emergency egress paths shall remain clear of materials, pallets, and equipment at all times (min. 36 in clearance).",
-    correctiveAction:
-      "Relocate pallets to staging area. Mark walkway boundaries with floor tape.",
-    preventiveAction:
-      "Add walkway audit to weekly 5S checklist; assign zone owner.",
-    owner: "Warehouse Lead",
-    dueInDays: 3,
+  vest: {
+    ref: "Mattel EHSS Std. 4.5 — High-Visibility Apparel",
+    text: "ANSI/ISEA 107 Class 2 vests required in areas with mobile equipment traffic.",
   },
-  {
-    id: "h3",
-    label: "Unsafe Chemical Storage",
-    category: "Chemical Safety",
-    confidence: 0.82,
-    bbox: { x: 62, y: 40, w: 28, h: 38 },
-    severity: 4,
-    likelihood: 3,
-    ehssRef: "Mattel EHSS Std. 9.3 — Hazardous Materials",
-    ehssText:
-      "Incompatible chemicals shall be segregated by class. Containers must be labeled per GHS and stored in secondary containment.",
-    correctiveAction:
-      "Segregate flammables from oxidizers. Verify GHS labels and add secondary containment.",
-    preventiveAction:
-      "Monthly chemical inventory audit; training refresher on SDS handling.",
-    owner: "EHSS Officer",
-    dueInDays: 7,
+  glasses: {
+    ref: "Mattel EHSS Std. 4.3 — Eye & Face Protection",
+    text: "ANSI Z87.1 compliant safety eyewear required in manufacturing and assembly zones.",
   },
-];
-
-export const SAMPLE_INSPECTIONS: Inspection[] = [
-  {
-    id: "INS-2026-0142",
-    date: "2026-06-22",
-    area: "Assembly Line A",
-    inspector: "M. Tanaka",
-    imageLabel: "line-a-shift2.jpg",
-    hazards: [SAMPLE_HAZARDS[0], SAMPLE_HAZARDS[1]],
+  gloves: {
+    ref: "Mattel EHSS Std. 4.4 — Hand Protection",
+    text: "Task-appropriate gloves shall be worn for cutting, chemical handling, and material movement.",
   },
-  {
-    id: "INS-2026-0141",
-    date: "2026-06-22",
-    area: "Warehouse B",
-    inspector: "R. Alvarez",
-    imageLabel: "wh-b-aisle3.jpg",
-    hazards: [SAMPLE_HAZARDS[1]],
+  shoes: {
+    ref: "Mattel EHSS Std. 4.1 — Foot Protection",
+    text: "ASTM F2413 safety footwear required in all production and warehouse areas.",
   },
-  {
-    id: "INS-2026-0140",
-    date: "2026-06-21",
-    area: "Paint Shop",
-    inspector: "S. Okafor",
-    imageLabel: "paint-storage.jpg",
-    hazards: [SAMPLE_HAZARDS[2], SAMPLE_HAZARDS[0]],
+  electrical: {
+    ref: "Mattel EHSS Std. 11.2 — Electrical Safety",
+    text: "Energized panels must remain closed; LOTO procedures apply during any service work.",
   },
-  {
-    id: "INS-2026-0139",
-    date: "2026-06-21",
-    area: "Office — 2F",
-    inspector: "L. Bianchi",
-    imageLabel: "office-egress.jpg",
-    hazards: [SAMPLE_HAZARDS[1]],
+  unsafe_area: {
+    ref: "Mattel EHSS Std. 6.4 — Restricted Zones",
+    text: "Workers shall not enter barricaded areas without authorization.",
   },
-  {
-    id: "INS-2026-0138",
-    date: "2026-06-20",
-    area: "Molding",
-    inspector: "M. Tanaka",
-    imageLabel: "molding-zone.jpg",
-    hazards: [SAMPLE_HAZARDS[0], SAMPLE_HAZARDS[2], SAMPLE_HAZARDS[1]],
+  fire: {
+    ref: "Mattel EHSS Std. 8.1 — Fire Prevention",
+    text: "Ignition sources must be controlled; egress paths must remain unobstructed.",
   },
-];
-
-export const HAZARD_TRENDS = [
-  { month: "Jan", Critical: 2, High: 6, Medium: 11, Low: 14 },
-  { month: "Feb", Critical: 3, High: 8, Medium: 9, Low: 12 },
-  { month: "Mar", Critical: 1, High: 5, Medium: 13, Low: 10 },
-  { month: "Apr", Critical: 4, High: 9, Medium: 12, Low: 9 },
-  { month: "May", Critical: 2, High: 7, Medium: 14, Low: 11 },
-  { month: "Jun", Critical: 3, High: 10, Medium: 12, Low: 13 },
-];
-
-export const AREA_BREAKDOWN = [
-  { area: "Assembly A", hazards: 18 },
-  { area: "Assembly B", hazards: 12 },
-  { area: "Warehouse", hazards: 22 },
-  { area: "Paint Shop", hazards: 9 },
-  { area: "Molding", hazards: 15 },
-  { area: "Office", hazards: 5 },
-];
+  spill: {
+    ref: "Mattel EHSS Std. 9.3 — Hazardous Materials",
+    text: "Spills must be contained immediately per SDS; report to EHSS for cleanup verification.",
+  },
+  wet_floor: {
+    ref: "Mattel EHSS Std. 7.2 — Slip, Trip & Fall Prevention",
+    text: "Wet surfaces must be cordoned and signed until dry.",
+  },
+  obstacle: {
+    ref: "Mattel EHSS Std. 7.1 — Egress & Walkways",
+    text: "Walkways must maintain 36 in clearance and remain free of stored material.",
+  },
+};

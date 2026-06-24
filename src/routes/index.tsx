@@ -1,205 +1,308 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { AppShell, RiskBadge } from "@/components/AppShell";
-import { SAMPLE_INSPECTIONS, HAZARD_TRENDS, AREA_BREAKDOWN, riskFromScore, riskScore } from "@/lib/safety-data";
-import { useAuth } from "@/lib/auth";
-import { AlertTriangle, ShieldCheck, Activity, TrendingUp, ScanLine, ArrowRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AppShell } from "@/components/AppShell";
+import { listInspections, type InspectionRow } from "@/lib/inspections";
+import { supabase } from "@/integrations/supabase/client";
+import { CATEGORIES, PPE_LABEL, type PpeKey } from "@/lib/safety-data";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
-  PieChart, Pie, Cell, Legend, LineChart, Line,
+  Activity, AlertTriangle, ShieldCheck, ShieldAlert, Camera,
+  Bell, Mail, ScanLine,
+} from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { readOutbox, type EmailEnvelope } from "@/lib/notifications";
+import {
+  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart,
+  Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Safety Dashboard — Mattel EHSS SafetyVision" },
-      { name: "description", content: "Live view of plant-wide hazard trends, open findings, and inspection activity." },
+      { title: "Dashboard — Mattel EHSS SafetyVision" },
+      { name: "description", content: "Real-time EHSS safety KPIs, hazard trends, and recent inspections." },
     ],
   }),
-  component: DashboardPage,
+  component: Dashboard,
 });
 
-function DashboardPage() {
-  const { primaryRole } = useAuth();
-  const persona = primaryRole ?? "inspector";
+const STATUS_COLOR: Record<string, string> = {
+  SAFE: "#16A34A",
+  WARNING: "#EAB308",
+  MODERATE: "#F97316",
+  "HIGH RISK": "#DC2626",
+  CRITICAL: "#7F1D1D",
+};
 
-  const allHazards = SAMPLE_INSPECTIONS.flatMap((i) => i.hazards);
-  const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 } as Record<string, number>;
-  allHazards.forEach((h) => {
-    counts[riskFromScore(riskScore(h))]++;
-  });
+function Dashboard() {
+  const { primaryRole, profile } = useAuth();
+  const [rows, setRows] = useState<InspectionRow[]>([]);
+  const [outbox, setOutbox] = useState<EmailEnvelope[]>([]);
+  const [flash, setFlash] = useState<InspectionRow | null>(null);
 
-  const pieData = [
-    { name: "Critical", value: counts.CRITICAL, color: "var(--risk-critical)" },
-    { name: "High", value: counts.HIGH, color: "var(--risk-high)" },
-    { name: "Medium", value: counts.MEDIUM, color: "var(--risk-medium)" },
-    { name: "Low", value: counts.LOW, color: "var(--risk-low)" },
-  ];
+  useEffect(() => {
+    void listInspections().then(setRows);
+    setOutbox(readOutbox());
+
+    const ch = supabase
+      .channel("inspections-feed")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "inspections" },
+        (payload) => {
+          const row = payload.new as InspectionRow;
+          setRows((r) => [row, ...r]);
+          if (row.category >= 4) {
+            setFlash(row);
+            setTimeout(() => setFlash(null), 8000);
+          }
+          setOutbox(readOutbox());
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, []);
+
+  const today = useMemo(() => {
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    return rows.filter((r) => new Date(r.created_at) >= start);
+  }, [rows]);
+
+  const counts = useMemo(() => {
+    const c = { total: rows.length, today: today.length, high: 0, critical: 0, ppeRate: 0, safe: 0 };
+    let withPpe = 0;
+    for (const r of rows) {
+      if (r.category === 4) c.high++;
+      if (r.category === 5) c.critical++;
+      if (r.category === 1) c.safe++;
+      if ((r.missing_ppe?.length ?? 0) === 0) withPpe++;
+    }
+    c.ppeRate = rows.length ? Math.round((withPpe / rows.length) * 100) : 100;
+    return c;
+  }, [rows, today]);
+
+  const statusData = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const r of rows) map[r.status] = (map[r.status] ?? 0) + 1;
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [rows]);
+
+  const trendData = useMemo(() => {
+    const days: Record<string, { date: string; count: number; risk: number }> = {};
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
+      const key = d.toISOString().slice(0, 10);
+      days[key] = { date: d.toLocaleDateString(undefined, { weekday: "short" }), count: 0, risk: 0 };
+    }
+    for (const r of rows) {
+      const k = new Date(r.created_at).toISOString().slice(0, 10);
+      if (days[k]) {
+        days[k].count++;
+        days[k].risk += r.risk_score;
+      }
+    }
+    return Object.values(days).map((d) => ({ ...d, risk: d.count ? Math.round(d.risk / d.count) : 0 }));
+  }, [rows]);
+
+  const ppeData = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const r of rows) for (const p of r.missing_ppe ?? []) m[p] = (m[p] ?? 0) + 1;
+    return (Object.keys(PPE_LABEL) as PpeKey[]).map((k) => ({ name: PPE_LABEL[k], count: m[k] ?? 0 }));
+  }, [rows]);
+
+  const recent = rows.slice(0, 8);
 
   return (
     <AppShell>
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-widest text-primary">
-            {persona === "manager" ? "EHSS Manager View" : persona === "admin" ? "Administrator View" : "Inspector View"}
-          </div>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight text-foreground">Safety Dashboard</h1>
+          <div className="text-xs font-semibold uppercase tracking-widest text-primary">Dashboard</div>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight">
+            Good day{profile ? `, ${profile.full_name.split(" ")[0]}` : ""}
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Real-time hazard visibility across all Mattel manufacturing sites.
+            Live EHSS safety overview · {primaryRole === "inspector" ? "your inspections" : "all sites"}
           </p>
         </div>
-        {persona === "inspector" && (
-          <Link
-            to="/analyze"
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
-          >
-            <ScanLine className="h-4 w-4" />
-            New inspection
-          </Link>
-        )}
-      </div>
+        <Link
+          to="/analyze"
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90"
+        >
+          <ScanLine className="h-4 w-4" /> Run inspection
+        </Link>
+      </header>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Today's inspections" value="14" delta="+3 vs yesterday" icon={Activity} tone="default" />
-        <KpiCard label="Critical findings" value={String(counts.CRITICAL)} delta="Open · needs action" icon={AlertTriangle} tone="critical" />
-        <KpiCard label="High risk" value={String(counts.HIGH)} delta="Across 4 areas" icon={TrendingUp} tone="high" />
-        <KpiCard label="Closed this week" value="38" delta="Avg 6.2h to close" icon={ShieldCheck} tone="ok" />
-      </div>
-
-      {/* Charts */}
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card title="Hazard trend (6 months)" className="lg:col-span-2">
-          <div className="h-72">
-            <ResponsiveContainer>
-              <LineChart data={HAZARD_TRENDS} margin={{ top: 10, right: 16, left: -8, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="month" stroke="var(--muted-foreground)" fontSize={12} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={12} />
-                <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8 }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Line type="monotone" dataKey="Critical" stroke="var(--risk-critical)" strokeWidth={2.5} dot={false} />
-                <Line type="monotone" dataKey="High" stroke="var(--risk-high)" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="Medium" stroke="var(--risk-medium)" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="Low" stroke="var(--risk-low)" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+      {flash && (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border-l-4 border-risk-critical bg-risk-critical/10 px-4 py-3 text-sm">
+          <ShieldAlert className="h-5 w-5 text-risk-critical" />
+          <div className="flex-1">
+            <strong>{flash.status}</strong> at {flash.area} · score {flash.risk_score} ·
+            inspector {flash.inspector_name} · {new Date(flash.created_at).toLocaleTimeString()}
           </div>
-        </Card>
+        </div>
+      )}
 
-        <Card title="Risk distribution">
-          <div className="h-72">
-            <ResponsiveContainer>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Kpi icon={Activity} label="Today's inspections" value={counts.today} color="primary" />
+        <Kpi icon={ShieldCheck} label="PPE compliance" value={`${counts.ppeRate}%`} color="success" />
+        <Kpi icon={AlertTriangle} label="High risk" value={counts.high} color="warning" />
+        <Kpi icon={ShieldAlert} label="Critical" value={counts.critical} color="critical" />
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        <Card title="Risk distribution" subtitle="By category">
+          {statusData.length ? (
+            <ResponsiveContainer width="100%" height={240}>
               <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={90} paddingAngle={2}>
-                  {pieData.map((d) => <Cell key={d.name} fill={d.color} />)}
+                <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={90}>
+                  {statusData.map((s) => (
+                    <Cell key={s.name} fill={STATUS_COLOR[s.name] ?? "#888"} />
+                  ))}
                 </Pie>
-                <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8 }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Tooltip />
+                <Legend />
               </PieChart>
             </ResponsiveContainer>
-          </div>
+          ) : (
+            <Empty label="No inspections yet" />
+          )}
         </Card>
 
-        <Card title="Hazards by area" className="lg:col-span-3">
-          <div className="h-64">
-            <ResponsiveContainer>
-              <BarChart data={AREA_BREAKDOWN} margin={{ top: 10, right: 16, left: -8, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="area" stroke="var(--muted-foreground)" fontSize={12} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={12} />
-                <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8 }} />
-                <Bar dataKey="hazards" fill="var(--primary)" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        <Card title="7-day trend" subtitle="Inspections & avg risk">
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={trendData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="date" fontSize={11} />
+              <YAxis yAxisId="left" fontSize={11} />
+              <YAxis yAxisId="right" orientation="right" fontSize={11} />
+              <Tooltip />
+              <Line yAxisId="left" dataKey="count" name="Inspections" stroke="#E60012" strokeWidth={2} />
+              <Line yAxisId="right" dataKey="risk" name="Avg risk" stroke="#0EA5E9" strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>
+
+        <Card title="Missing PPE breakdown" subtitle="All time">
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={ppeData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="name" fontSize={10} angle={-20} textAnchor="end" height={50} />
+              <YAxis fontSize={11} />
+              <Tooltip />
+              <Bar dataKey="count" fill="#E60012" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
       </div>
 
-      {/* Recent inspections */}
-      <Card title="Recent inspections" className="mt-6" action={
-        <Link to="/reports" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
-          View all <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
-      }>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
-              <tr className="border-b border-border">
-                <th className="px-3 py-3 font-medium">ID</th>
-                <th className="px-3 py-3 font-medium">Date</th>
-                <th className="px-3 py-3 font-medium">Area</th>
-                <th className="px-3 py-3 font-medium">Inspector</th>
-                <th className="px-3 py-3 font-medium">Hazards</th>
-                <th className="px-3 py-3 font-medium">Top risk</th>
-                <th className="px-3 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {SAMPLE_INSPECTIONS.map((ins) => {
-                const top = ins.hazards
-                  .map((h) => ({ h, lvl: riskFromScore(riskScore(h)) }))
-                  .sort((a, b) => riskScore(b.h) - riskScore(a.h))[0];
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        <Card title="Recent inspections" subtitle="Real-time feed" className="lg:col-span-2">
+          {recent.length ? (
+            <ul className="divide-y divide-border">
+              {recent.map((r) => {
+                const def = CATEGORIES[r.category];
                 return (
-                  <tr key={ins.id} className="border-b border-border/60 last:border-0 hover:bg-muted/40">
-                    <td className="px-3 py-3 font-mono text-xs text-foreground">{ins.id}</td>
-                    <td className="px-3 py-3 text-muted-foreground">{ins.date}</td>
-                    <td className="px-3 py-3 font-medium text-foreground">{ins.area}</td>
-                    <td className="px-3 py-3 text-muted-foreground">{ins.inspector}</td>
-                    <td className="px-3 py-3">{ins.hazards.length}</td>
-                    <td className="px-3 py-3"><RiskBadge level={top.lvl} /></td>
-                    <td className="px-3 py-3 text-right">
-                      <Link to="/reports" className="text-sm font-medium text-primary hover:underline">Open</Link>
-                    </td>
-                  </tr>
+                  <li key={r.id} className="flex items-center gap-3 py-3">
+                    <span
+                      className={cn("inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider", def.badgeClass)}
+                    >
+                      {def.status}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{r.area}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {r.inspector_name} · {new Date(r.created_at).toLocaleString()} · {r.source}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-bold tabular-nums">{r.risk_score}</div>
+                      <div className="text-[10px] uppercase text-muted-foreground">score</div>
+                    </div>
+                  </li>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+            </ul>
+          ) : (
+            <Empty label="No inspections yet — try Run inspection above." />
+          )}
+        </Card>
+
+        <Card title="Notification outbox" subtitle="Demo mode · in-app">
+          <div className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+            <Mail className="h-3.5 w-3.5" />
+            All emails route to lorenjerem@gmail.com
+          </div>
+          {outbox.length ? (
+            <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+              {outbox.slice(0, 12).map((e, i) => (
+                <li key={i} className="rounded-md border border-border p-2.5">
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-primary">{e.role}</span>
+                    <span className="ml-auto text-[10px] text-muted-foreground">
+                      {new Date(e.sentAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs font-semibold leading-snug">{e.subject}</div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <Empty label="No notifications yet." />
+          )}
+        </Card>
+      </div>
     </AppShell>
   );
 }
 
-function KpiCard({
-  label, value, delta, icon: Icon, tone,
-}: {
-  label: string; value: string; delta: string;
-  icon: typeof Activity;
-  tone: "default" | "critical" | "high" | "ok";
+function Kpi({ icon: Icon, label, value, color }: {
+  icon: typeof Activity; label: string; value: number | string;
+  color: "primary" | "success" | "warning" | "critical";
 }) {
-  const toneClass = {
-    default: "text-mattel-blue bg-mattel-blue/10",
-    critical: "text-risk-critical bg-risk-critical/10",
-    high: "text-risk-high bg-risk-high/10",
-    ok: "text-risk-low bg-risk-low/10",
-  }[tone];
+  const cls = {
+    primary: "bg-primary/10 text-primary",
+    success: "bg-risk-low/15 text-risk-low",
+    warning: "bg-risk-high/15 text-risk-high",
+    critical: "bg-risk-critical/15 text-risk-critical",
+  }[color];
   return (
     <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
-          <div className="mt-2 text-3xl font-bold tracking-tight text-foreground">{value}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{delta}</div>
-        </div>
-        <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${toneClass}`}>
+      <div className="flex items-center gap-3">
+        <div className={cn("flex h-10 w-10 items-center justify-center rounded-md", cls)}>
           <Icon className="h-5 w-5" />
         </div>
+        <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
       </div>
+      <div className="mt-3 text-3xl font-bold tabular-nums">{value}</div>
     </div>
   );
 }
 
-function Card({
-  title, children, className = "", action,
-}: { title: string; children: React.ReactNode; className?: string; action?: React.ReactNode }) {
+function Card({ title, subtitle, className, children }: {
+  title: string; subtitle?: string; className?: string; children: React.ReactNode;
+}) {
   return (
-    <section className={`rounded-xl border border-border bg-card p-5 shadow-sm ${className}`}>
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground">{title}</h2>
-        {action}
+    <div className={cn("rounded-xl border border-border bg-card p-5 shadow-sm", className)}>
+      <div className="mb-3 flex items-baseline justify-between">
+        <div>
+          <div className="text-sm font-semibold">{title}</div>
+          {subtitle && <div className="text-xs text-muted-foreground">{subtitle}</div>}
+        </div>
       </div>
       {children}
-    </section>
+    </div>
   );
 }
+
+function Empty({ label }: { label: string }) {
+  return (
+    <div className="flex h-32 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">
+      <Camera className="mr-2 h-3.5 w-3.5" />
+      {label}
+    </div>
+  );
+}
+
