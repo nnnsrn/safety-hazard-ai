@@ -1,230 +1,263 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { AppShell, RiskBadge } from "@/components/AppShell";
-import { SAMPLE_HAZARDS, riskFromScore, riskScore, type Hazard } from "@/lib/safety-data";
-import { Upload, Sparkles, FileText, BookOpen, RotateCcw, MessageSquare } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Upload, Sparkles, FileText, RotateCcw, Camera, ImageIcon,
+  CheckCircle2, AlertTriangle, ShieldAlert, Loader2,
+} from "lucide-react";
+import { AppShell } from "@/components/AppShell";
+import { LiveCamera } from "@/components/LiveCamera";
+import { useAuth } from "@/lib/auth";
+import {
+  PPE_LABEL, ENV_LABEL, CATEGORIES, classify, correctiveActionFor,
+  type PpeKey, type EnvHazardKey,
+} from "@/lib/safety-data";
+import { loadModel, detect, type Detection } from "@/lib/detection";
+import { saveInspection, type InspectionRow } from "@/lib/inspections";
+import { notifyInspectionComplete } from "@/lib/notifications";
+import { exportInspectionPdf } from "@/lib/exporters";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/analyze")({
   head: () => ({
     meta: [
       { title: "Hazard Analyzer — Mattel EHSS SafetyVision" },
-      { name: "description", content: "Upload a photo or video to detect workplace hazards with AI." },
+      { name: "description", content: "Live AI hazard detection — camera, upload, or drag & drop." },
     ],
   }),
   component: AnalyzePage,
 });
 
-type Stage = "upload" | "analyzing" | "results";
+type Mode = "choose" | "live" | "upload";
+type Stage = "idle" | "running" | "review";
 
 function AnalyzePage() {
-  const [stage, setStage] = useState<Stage>("upload");
+  const { user, profile } = useAuth();
+  const [mode, setMode] = useState<Mode>("choose");
+  const [stage, setStage] = useState<Stage>("idle");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Hazard | null>(null);
-  const [showExplain, setShowExplain] = useState(false);
-
-  const hazards = SAMPLE_HAZARDS;
-
-  function handleFile(file: File) {
-    const url = URL.createObjectURL(file);
-    setImageUrl(url);
-    setStage("analyzing");
-    setTimeout(() => {
-      setStage("results");
-      setSelected(hazards[0]);
-    }, 1800);
-  }
+  const [detections, setDetections] = useState<Detection[]>([]);
+  const [area, setArea] = useState("Production Line A");
+  const [missingPpe, setMissingPpe] = useState<PpeKey[]>([]);
+  const [envHazards, setEnvHazards] = useState<EnvHazardKey[]>([]);
+  const [saved, setSaved] = useState<InspectionRow | null>(null);
+  const [busy, setBusy] = useState(false);
 
   function reset() {
+    setStage("idle");
     setImageUrl(null);
-    setSelected(null);
-    setStage("upload");
-    setShowExplain(false);
+    setDetections([]);
+    setMissingPpe([]);
+    setEnvHazards([]);
+    setSaved(null);
+    setMode("choose");
   }
+
+  async function analyzeImage(dataUrl: string, detsFromLive?: Detection[]) {
+    setImageUrl(dataUrl);
+    setStage("running");
+    if (detsFromLive) {
+      setDetections(detsFromLive);
+      setStage("review");
+      return;
+    }
+    // Run COCO-SSD on the uploaded image
+    await loadModel();
+    const img = new Image();
+    img.src = dataUrl;
+    await img.decode();
+    try {
+      const dets = await detect(img);
+      setDetections(dets);
+    } catch (e) {
+      console.error(e);
+      setDetections([]);
+    }
+    setStage("review");
+  }
+
+  async function onSubmit() {
+    if (!user || !profile) return;
+    setBusy(true);
+    const result = classify(missingPpe, envHazards);
+    const row = await saveInspection({
+      inspectorId: user.id,
+      inspectorName: profile.full_name,
+      inspectorEmail: profile.email,
+      area,
+      source: mode === "live" ? "live" : "upload",
+      result,
+      detections,
+      imageDataUrl: imageUrl,
+    });
+    setBusy(false);
+    if (row) {
+      setSaved(row);
+      notifyInspectionComplete({
+        inspectionId: row.id.slice(0, 8).toUpperCase(),
+        inspector: profile.full_name,
+        area,
+        result,
+        timestamp: new Date(row.created_at),
+      });
+    }
+  }
+
+  const liveResult = stage === "review" ? classify(missingPpe, envHazards) : null;
 
   return (
     <AppShell>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-xs font-semibold uppercase tracking-widest text-primary">AI Hazard Analyzer</div>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight text-foreground">Detect hazards from an image</h1>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight">Detect hazards in real time</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Computer vision + EHSS RAG. Detects PPE violations, blocked egress, unsafe storage and more.
+            Live camera or image upload · On-device object detection · 5-category risk scoring
           </p>
         </div>
-        {stage === "results" && (
+        {(stage === "review" || saved) && (
           <button
             onClick={reset}
             className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-accent"
           >
-            <RotateCcw className="h-4 w-4" /> New analysis
+            <RotateCcw className="h-4 w-4" /> New inspection
           </button>
         )}
-      </div>
+      </header>
 
-      {stage === "upload" && <UploadZone onFile={handleFile} />}
-
-      {stage === "analyzing" && (
-        <div className="rounded-xl border border-border bg-card p-12 text-center shadow-sm">
-          {imageUrl && (
-            <img src={imageUrl} alt="" className="mx-auto mb-6 max-h-80 rounded-lg border border-border opacity-60" />
-          )}
-          <div className="mx-auto flex max-w-md flex-col items-center gap-3">
-            <Sparkles className="h-8 w-8 animate-pulse text-primary" />
-            <div className="text-base font-semibold text-foreground">Analyzing image…</div>
-            <div className="space-y-1 text-sm text-muted-foreground">
-              <p>• Running YOLO object detection</p>
-              <p>• Extracting OCR from signage</p>
-              <p>• Querying Mattel EHSS knowledge base</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {stage === "results" && imageUrl && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-          {/* Image w/ bounding boxes */}
-          <div className="lg:col-span-3">
-            <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-              <div className="relative">
-                <img src={imageUrl} alt="Inspection" className="block w-full" />
-                {hazards.map((h) => {
-                  const lvl = riskFromScore(riskScore(h));
-                  const color =
-                    lvl === "CRITICAL" ? "var(--risk-critical)" :
-                    lvl === "HIGH" ? "var(--risk-high)" :
-                    lvl === "MEDIUM" ? "var(--risk-medium)" : "var(--risk-low)";
-                  const active = selected?.id === h.id;
-                  return (
-                    <button
-                      key={h.id}
-                      onClick={() => { setSelected(h); setShowExplain(false); }}
-                      className="absolute transition-all"
-                      style={{
-                        left: `${h.bbox.x}%`,
-                        top: `${h.bbox.y}%`,
-                        width: `${h.bbox.w}%`,
-                        height: `${h.bbox.h}%`,
-                        border: `2.5px solid ${color}`,
-                        background: active ? `color-mix(in oklab, ${color} 18%, transparent)` : "transparent",
-                        boxShadow: active ? `0 0 0 3px color-mix(in oklab, ${color} 30%, transparent)` : "none",
-                      }}
-                    >
-                      <span
-                        className="absolute -top-6 left-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold text-white"
-                        style={{ background: color }}
-                      >
-                        {h.label} · {Math.round(h.confidence * 100)}%
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex items-center justify-between border-t border-border px-4 py-3 text-xs text-muted-foreground">
-                <span>{hazards.length} hazards detected · 1.8s</span>
-                <span className="font-mono">demo-image.jpg</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Hazard list + detail */}
-          <div className="space-y-4 lg:col-span-2">
-            <div className="rounded-xl border border-border bg-card shadow-sm">
-              <div className="border-b border-border px-4 py-3 text-sm font-semibold uppercase tracking-wider">
-                Detected hazards
-              </div>
-              <ul>
-                {hazards.map((h) => {
-                  const lvl = riskFromScore(riskScore(h));
-                  const active = selected?.id === h.id;
-                  return (
-                    <li key={h.id}>
-                      <button
-                        onClick={() => { setSelected(h); setShowExplain(false); }}
-                        className={`flex w-full items-center justify-between gap-3 border-b border-border/60 px-4 py-3 text-left last:border-0 ${
-                          active ? "bg-primary/5" : "hover:bg-muted/50"
-                        }`}
-                      >
-                        <div>
-                          <div className="text-sm font-semibold text-foreground">{h.label}</div>
-                          <div className="text-xs text-muted-foreground">{h.category} · {Math.round(h.confidence * 100)}% conf.</div>
-                        </div>
-                        <RiskBadge level={lvl} />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-
-            {selected && (
-              <HazardDetail
-                hazard={selected}
-                showExplain={showExplain}
-                onExplain={() => setShowExplain(true)}
-              />
-            )}
-
-            <Link
-              to="/reports"
-              className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90"
-            >
-              <FileText className="h-4 w-4" /> Generate safety observation report
-            </Link>
-          </div>
-        </div>
+      {saved ? (
+        <SavedSummary row={saved} onNew={reset} />
+      ) : stage === "review" && imageUrl && liveResult ? (
+        <ReviewScreen
+          imageUrl={imageUrl}
+          detections={detections}
+          area={area}
+          setArea={setArea}
+          missingPpe={missingPpe}
+          setMissingPpe={setMissingPpe}
+          envHazards={envHazards}
+          setEnvHazards={setEnvHazards}
+          result={liveResult}
+          busy={busy}
+          onSubmit={onSubmit}
+        />
+      ) : mode === "choose" ? (
+        <ModePicker onPick={setMode} />
+      ) : mode === "live" ? (
+        <LiveCamera
+          onCapture={(dataUrl, dets) => {
+            void analyzeImage(dataUrl, dets);
+          }}
+        />
+      ) : (
+        <UploadZone onFile={(dataUrl) => void analyzeImage(dataUrl)} running={stage === "running"} />
       )}
     </AppShell>
   );
 }
 
-function UploadZone({ onFile }: { onFile: (f: File) => void }) {
+function ModePicker({ onPick }: { onPick: (m: Mode) => void }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <button
+        onClick={() => onPick("live")}
+        className="group flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-6 text-left shadow-sm transition hover:border-primary hover:shadow"
+      >
+        <div className="flex h-12 w-12 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Camera className="h-6 w-6" />
+        </div>
+        <div>
+          <div className="text-base font-semibold">Live camera detection</div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Stream your camera with continuous on-device object detection. Capture a frame to file an inspection.
+          </p>
+        </div>
+        <span className="mt-auto text-xs font-semibold uppercase tracking-wider text-primary group-hover:underline">
+          Start camera →
+        </span>
+      </button>
+      <button
+        onClick={() => onPick("upload")}
+        className="group flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-6 text-left shadow-sm transition hover:border-primary hover:shadow"
+      >
+        <div className="flex h-12 w-12 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <ImageIcon className="h-6 w-6" />
+        </div>
+        <div>
+          <div className="text-base font-semibold">Upload or drag &amp; drop</div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Drop a photo from a phone, dashcam, or CCTV still. Same detection pipeline, same scoring.
+          </p>
+        </div>
+        <span className="mt-auto text-xs font-semibold uppercase tracking-wider text-primary group-hover:underline">
+          Choose image →
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function UploadZone({ onFile, running }: { onFile: (dataUrl: string) => void; running: boolean }) {
   const [dragOver, setDragOver] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const handle = async (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => onFile(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  if (running) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-16 text-center shadow-sm">
+        <Loader2 className="mx-auto h-10 w-10 animate-spin text-primary" />
+        <div className="mt-4 text-base font-semibold">Running detection…</div>
+        <p className="mt-1 text-sm text-muted-foreground">First run loads the ~6 MB model; subsequent runs are instant.</p>
+      </div>
+    );
+  }
 
   return (
     <div>
-      <label
+      <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
           e.preventDefault();
           setDragOver(false);
           const f = e.dataTransfer.files?.[0];
-          if (f) onFile(f);
+          if (f) void handle(f);
         }}
-        className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed bg-card p-16 text-center transition ${
-          dragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
-        }`}
+        onClick={() => inputRef.current?.click()}
+        className={cn(
+          "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed bg-card p-16 text-center transition",
+          dragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50",
+        )}
       >
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
           <Upload className="h-7 w-7" />
         </div>
-        <div className="mt-4 text-base font-semibold text-foreground">Upload an image or video</div>
-        <div className="mt-1 text-sm text-muted-foreground">
-          Drag and drop a file here, or click to browse. JPG, PNG, MP4 up to 50&nbsp;MB.
-        </div>
+        <div className="mt-4 text-base font-semibold">Drop an image or click to upload</div>
+        <div className="mt-1 text-sm text-muted-foreground">JPG, PNG up to 10 MB</div>
         <input
+          ref={inputRef}
           type="file"
-          accept="image/*,video/*"
+          accept="image/*"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) onFile(f);
+            if (f) void handle(f);
           }}
         />
-        <div className="mt-6 flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">
-          {["Missing PPE", "Blocked walkway", "Unsafe storage", "Poor housekeeping", "Electrical hazard"].map((t) => (
-            <span key={t} className="rounded-full border border-border bg-background px-2.5 py-1">{t}</span>
-          ))}
-        </div>
-      </label>
-
+      </div>
       <div className="mt-4 text-center text-xs text-muted-foreground">
         Try the demo:&nbsp;
         <button
           onClick={async () => {
             const res = await fetch("https://images.unsplash.com/photo-1565008447742-97f6f38c985c?w=1200");
             const blob = await res.blob();
-            onFile(new File([blob], "demo.jpg", { type: blob.type }));
+            const reader = new FileReader();
+            reader.onload = () => onFile(reader.result as string);
+            reader.readAsDataURL(blob);
           }}
           className="font-semibold text-primary hover:underline"
         >
@@ -235,68 +268,237 @@ function UploadZone({ onFile }: { onFile: (f: File) => void }) {
   );
 }
 
-function HazardDetail({
-  hazard, showExplain, onExplain,
-}: { hazard: Hazard; showExplain: boolean; onExplain: () => void }) {
-  const score = riskScore(hazard);
-  const lvl = riskFromScore(score);
+function ReviewScreen(props: {
+  imageUrl: string;
+  detections: Detection[];
+  area: string;
+  setArea: (v: string) => void;
+  missingPpe: PpeKey[];
+  setMissingPpe: (v: PpeKey[]) => void;
+  envHazards: EnvHazardKey[];
+  setEnvHazards: (v: EnvHazardKey[]) => void;
+  result: ReturnType<typeof classify>;
+  busy: boolean;
+  onSubmit: () => void;
+}) {
+  const { imageUrl, detections, area, setArea, missingPpe, setMissingPpe,
+    envHazards, setEnvHazards, result, busy, onSubmit } = props;
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    const img = imgRef.current;
+    const cvs = canvasRef.current;
+    if (!img || !cvs) return;
+    const draw = () => {
+      cvs.width = img.naturalWidth;
+      cvs.height = img.naturalHeight;
+      const ctx = cvs.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, cvs.width, cvs.height);
+      for (const d of detections) {
+        const [x, y, w, h] = d.bbox;
+        const isPerson = d.class === "person";
+        const color = isPerson ? "#E60012" : "#0EA5E9";
+        ctx.lineWidth = Math.max(2, cvs.width / 400);
+        ctx.strokeStyle = color;
+        ctx.strokeRect(x, y, w, h);
+        ctx.font = `bold ${Math.max(12, cvs.width / 70)}px system-ui`;
+        const label = `${d.class} ${Math.round(d.score * 100)}%`;
+        const tw = ctx.measureText(label).width + 10;
+        ctx.fillStyle = color;
+        ctx.fillRect(x, Math.max(0, y - 22), tw, 22);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, x + 5, Math.max(14, y - 6));
+      }
+    };
+    if (img.complete) draw();
+    else img.onload = draw;
+  }, [imageUrl, detections]);
+
+  const def = CATEGORIES[result.category];
+  const peopleCount = detections.filter((d) => d.class === "person").length;
+
+  function toggle<T extends string>(arr: T[], setArr: (v: T[]) => void, k: T) {
+    setArr(arr.includes(k) ? arr.filter((x) => x !== k) : [...arr, k]);
+  }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{hazard.category}</div>
-          <h3 className="mt-0.5 text-lg font-bold text-foreground">{hazard.label}</h3>
+    <div className="grid gap-6 lg:grid-cols-5">
+      <div className="lg:col-span-3">
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+          <div className="relative bg-black/5">
+            <img ref={imgRef} src={imageUrl} alt="" className="block w-full" />
+            <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+          </div>
+          <div className="flex items-center justify-between border-t border-border px-4 py-3 text-xs text-muted-foreground">
+            <span>{detections.length} objects · {peopleCount} {peopleCount === 1 ? "person" : "people"}</span>
+            <span className="font-mono">on-device · COCO-SSD</span>
+          </div>
         </div>
-        <RiskBadge level={lvl} />
-      </div>
 
-      {/* Risk matrix */}
-      <div className="mt-4 grid grid-cols-3 gap-2 rounded-lg bg-muted/50 p-3 text-center">
-        <Stat label="Severity" value={`${hazard.severity}/5`} />
-        <Stat label="Likelihood" value={`${hazard.likelihood}/5`} />
-        <Stat label="Risk score" value={String(score)} highlight />
-      </div>
-
-      <div className="mt-4 space-y-3 text-sm">
-        <div>
-          <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Corrective action</div>
-          <p className="text-foreground">{hazard.correctiveAction}</p>
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span><strong className="text-foreground">Owner:</strong> {hazard.owner}</span>
-          <span><strong className="text-foreground">Due:</strong> {hazard.dueInDays}d</span>
-        </div>
-      </div>
-
-      {!showExplain ? (
-        <button
-          onClick={onExplain}
-          className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-semibold text-primary hover:bg-primary/10"
+        {/* Big risk banner */}
+        <div
+          className={cn(
+            "mt-4 flex items-center gap-4 rounded-xl border p-4 shadow-sm",
+            def.badgeClass,
+          )}
         >
-          <MessageSquare className="h-4 w-4" /> Ask EHSS Assistant to explain
-        </button>
-      ) : (
-        <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-4">
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
-            <BookOpen className="h-3.5 w-3.5" /> {hazard.ehssRef}
+          {result.category === 1 ? (
+            <CheckCircle2 className="h-9 w-9" />
+          ) : result.category >= 4 ? (
+            <ShieldAlert className="h-9 w-9" />
+          ) : (
+            <AlertTriangle className="h-9 w-9" />
+          )}
+          <div className="flex-1">
+            <div className="text-xs font-bold uppercase tracking-widest opacity-80">
+              Category {result.category} · {result.severity}
+            </div>
+            <div className="text-xl font-bold">{def.status}</div>
+            <div className="text-sm opacity-90">{def.description}</div>
           </div>
-          <p className="text-sm leading-relaxed text-foreground">{hazard.ehssText}</p>
-          <div className="mt-3 border-t border-primary/15 pt-3 text-sm">
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Preventive action</div>
-            <p className="text-foreground">{hazard.preventiveAction}</p>
+          <div className="text-right">
+            <div className="text-[10px] font-semibold uppercase tracking-wider opacity-70">Risk score</div>
+            <div className="text-3xl font-black tabular-nums">{result.score}</div>
+            <div className="text-[10px] opacity-70">/ 100</div>
           </div>
         </div>
-      )}
+      </div>
+
+      <div className="space-y-4 lg:col-span-2">
+        <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Area / Location
+          </label>
+          <input
+            value={area}
+            onChange={(e) => setArea(e.target.value)}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div className="rounded-xl border border-border bg-card shadow-sm">
+          <div className="border-b border-border px-4 py-3 text-sm font-semibold uppercase tracking-wider">
+            PPE compliance ({peopleCount > 0 ? `${peopleCount} worker${peopleCount > 1 ? "s" : ""} detected` : "no person detected"})
+          </div>
+          <div className="grid grid-cols-2 gap-2 p-3">
+            {(Object.keys(PPE_LABEL) as PpeKey[]).map((k) => {
+              const active = missingPpe.includes(k);
+              return (
+                <button
+                  key={k}
+                  onClick={() => toggle(missingPpe, setMissingPpe, k)}
+                  className={cn(
+                    "rounded-md border px-3 py-2 text-left text-sm transition",
+                    active
+                      ? "border-risk-high bg-risk-high/10 text-risk-high"
+                      : "border-border bg-background hover:border-primary/40",
+                  )}
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-wider opacity-70">
+                    {active ? "Missing" : "Present"}
+                  </div>
+                  <div className="font-medium">{PPE_LABEL[k]}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card shadow-sm">
+          <div className="border-b border-border px-4 py-3 text-sm font-semibold uppercase tracking-wider">
+            Environmental hazards
+          </div>
+          <div className="flex flex-wrap gap-2 p-3">
+            {(Object.keys(ENV_LABEL) as EnvHazardKey[]).map((k) => {
+              const active = envHazards.includes(k);
+              return (
+                <button
+                  key={k}
+                  onClick={() => toggle(envHazards, setEnvHazards, k)}
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                    active
+                      ? "border-risk-critical bg-risk-critical/10 text-risk-critical"
+                      : "border-border bg-background hover:border-primary/40",
+                  )}
+                >
+                  {ENV_LABEL[k]}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-muted/50 p-4 text-sm">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Recommended action
+          </div>
+          <p>{correctiveActionFor(result)}</p>
+        </div>
+
+        <button
+          onClick={onSubmit}
+          disabled={busy}
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 disabled:opacity-60"
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {busy ? "Filing inspection…" : "File inspection & notify"}
+        </button>
+      </div>
     </div>
   );
 }
 
-function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+function SavedSummary({ row, onNew }: { row: InspectionRow; onNew: () => void }) {
+  const def = CATEGORIES[row.category];
   return (
-    <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`mt-0.5 text-xl font-bold ${highlight ? "text-primary" : "text-foreground"}`}>{value}</div>
+    <div className="grid gap-6 lg:grid-cols-3">
+      <div className={cn("lg:col-span-2 rounded-xl border p-6 shadow-sm", def.badgeClass)}>
+        <div className="flex items-start gap-4">
+          <CheckCircle2 className="h-10 w-10 shrink-0" />
+          <div className="flex-1">
+            <div className="text-xs font-bold uppercase tracking-widest opacity-80">Inspection filed</div>
+            <h2 className="mt-1 text-2xl font-bold">{def.status}</h2>
+            <p className="text-sm opacity-90">{row.corrective_action}</p>
+            <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+              <Stat label="Category" value={`${row.category}`} />
+              <Stat label="Score" value={`${row.risk_score}/100`} />
+              <Stat label="ID" value={row.id.slice(0, 8).toUpperCase()} />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <button
+          onClick={() => exportInspectionPdf(row)}
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-4 py-3 text-sm font-semibold text-background hover:opacity-90"
+        >
+          <FileText className="h-4 w-4" /> Download PDF report
+        </button>
+        <Link
+          to="/reports"
+          className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-3 text-sm font-semibold hover:bg-accent"
+        >
+          View all reports
+        </Link>
+        <button
+          onClick={onNew}
+          className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-3 text-sm font-semibold hover:bg-accent"
+        >
+          <RotateCcw className="h-4 w-4" /> New inspection
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-background/40 px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wider opacity-70">{label}</div>
+      <div className="font-bold tabular-nums">{value}</div>
     </div>
   );
 }

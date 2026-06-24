@@ -47,7 +47,7 @@ export async function saveInspection(input: {
       status: result.status,
       risk_score: result.score,
       severity: result.severity,
-      detected_objects: input.detections as unknown as object,
+      detected_objects: input.detections as unknown as never,
       missing_ppe: result.missingPpe,
       env_hazards: result.envHazards,
       corrective_action: correctiveActionFor(result),
