@@ -5,7 +5,7 @@ import { listInspections, type InspectionRow } from "@/lib/inspections";
 import { supabase } from "@/integrations/supabase/client";
 import { CATEGORIES, PPE_LABEL, type PpeKey } from "@/lib/safety-data";
 import {
-  Activity, AlertTriangle, ShieldCheck, ShieldAlert, TrendingUp, Camera,
+  Activity, AlertTriangle, ShieldCheck, ShieldAlert, Camera,
   Bell, Mail, ScanLine,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -306,5 +306,3 @@ function Empty({ label }: { label: string }) {
   );
 }
 
-// Touch unused import to satisfy linter
-export const _t = TrendingUp;
