@@ -140,7 +140,7 @@ export function RiskBadge({ level }: { level: "LOW" | "MEDIUM" | "HIGH" | "CRITI
 // ---------- Auth screens ----------
 
 function AuthScreen() {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-muted px-4 py-10">
       <div className="w-full max-w-md">
@@ -155,28 +155,34 @@ function AuthScreen() {
         </div>
 
         <div className="rounded-xl border border-border bg-card p-8 shadow-sm">
-          <div className="mb-6 flex gap-1 rounded-md bg-muted p-1">
-            <button
-              onClick={() => setMode("login")}
-              className={cn(
-                "flex-1 rounded-sm px-3 py-2 text-sm font-medium transition-colors",
-                mode === "login" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground",
-              )}
-            >
-              Sign in
-            </button>
-            <button
-              onClick={() => setMode("register")}
-              className={cn(
-                "flex-1 rounded-sm px-3 py-2 text-sm font-medium transition-colors",
-                mode === "register" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground",
-              )}
-            >
-              Request access
-            </button>
-          </div>
-          {mode === "login" ? <LoginForm /> : <RegisterForm onDone={() => setMode("login")} />}
+          {mode !== "forgot" && (
+            <div className="mb-6 flex gap-1 rounded-md bg-muted p-1">
+              <button
+                onClick={() => setMode("login")}
+                className={cn(
+                  "flex-1 rounded-sm px-3 py-2 text-sm font-medium transition-colors",
+                  mode === "login" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground",
+                )}
+              >
+                Sign in
+              </button>
+              <button
+                onClick={() => setMode("register")}
+                className={cn(
+                  "flex-1 rounded-sm px-3 py-2 text-sm font-medium transition-colors",
+                  mode === "register" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground",
+                )}
+              >
+                Request access
+              </button>
+            </div>
+          )}
+          {mode === "login" && <LoginForm onForgot={() => setMode("forgot")} />}
+          {mode === "register" && <RegisterForm onDone={() => setMode("login")} />}
+          {mode === "forgot" && <ForgotForm onBack={() => setMode("login")} />}
         </div>
+
+        <DemoCredentials />
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
           The first account created becomes the system Administrator.
@@ -186,7 +192,32 @@ function AuthScreen() {
   );
 }
 
-function LoginForm() {
+function DemoCredentials() {
+  const accounts = [
+    { role: "Admin", email: "admin@ehss-ai.com", pass: "Admin123!" },
+    { role: "Manager", email: "manager@ehss-ai.com", pass: "Manager123!" },
+    { role: "Inspector", email: "inspector@ehss-ai.com", pass: "Inspector123!" },
+  ];
+  return (
+    <div className="mt-4 rounded-lg border border-border bg-card/50 p-3 text-xs">
+      <div className="mb-2 font-semibold uppercase tracking-wider text-muted-foreground">Demo accounts</div>
+      <ul className="space-y-1">
+        {accounts.map((a) => (
+          <li key={a.email} className="flex items-center justify-between gap-3 font-mono">
+            <span className="text-foreground">{a.email}</span>
+            <span className="text-muted-foreground">{a.pass}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[10px] text-muted-foreground">
+        Register each address once with the matching password; they activate automatically.
+      </p>
+    </div>
+  );
+}
+
+function LoginForm({ onForgot }: { onForgot: () => void }) {
+  const { refresh } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -197,6 +228,13 @@ function LoginForm() {
     setErr(null);
     setBusy(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (!error) {
+      // Auto-seed demo accounts so any of the three demo users gets immediate access
+      try {
+        await supabase.rpc("seed_demo_accounts");
+        await refresh();
+      } catch {}
+    }
     setBusy(false);
     if (error) setErr(error.message);
   };
@@ -212,6 +250,65 @@ function LoginForm() {
         className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-60"
       >
         {busy ? "Signing in…" : "Sign in"}
+      </button>
+      <button
+        type="button"
+        onClick={onForgot}
+        className="block w-full text-center text-xs text-muted-foreground hover:text-primary"
+      >
+        Forgot password?
+      </button>
+    </form>
+  );
+}
+
+function ForgotForm({ onBack }: { onBack: () => void }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setBusy(false);
+    if (error) setErr(error.message);
+    else setSent(true);
+  };
+
+  if (sent) {
+    return (
+      <div className="space-y-3 text-center">
+        <Clock className="mx-auto h-10 w-10 text-primary" />
+        <h3 className="text-base font-semibold">Check your email</h3>
+        <p className="text-sm text-muted-foreground">
+          If an account exists for {email}, a reset link is on its way.
+        </p>
+        <button onClick={onBack} className="text-sm font-medium text-primary hover:underline">
+          Back to sign in
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <h3 className="text-base font-semibold">Reset your password</h3>
+      <Field label="Email" type="email" value={email} onChange={setEmail} required />
+      {err && <p className="text-sm text-destructive">{err}</p>}
+      <button
+        type="submit"
+        disabled={busy}
+        className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+      >
+        {busy ? "Sending…" : "Send reset link"}
+      </button>
+      <button type="button" onClick={onBack} className="block w-full text-center text-xs text-muted-foreground hover:text-primary">
+        Back to sign in
       </button>
     </form>
   );

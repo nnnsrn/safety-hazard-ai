@@ -9,12 +9,18 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as AnalyzeRouteImport } from './routes/analyze'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReportsRoute = ReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
@@ -47,6 +53,7 @@ export interface FileRoutesByFullPath {
   '/analyze': typeof AnalyzeRoute
   '/knowledge': typeof KnowledgeRoute
   '/reports': typeof ReportsRoute
+  '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByTo {
   '/analyze': typeof AnalyzeRoute
   '/knowledge': typeof KnowledgeRoute
   '/reports': typeof ReportsRoute
+  '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,13 +70,33 @@ export interface FileRoutesById {
   '/analyze': typeof AnalyzeRoute
   '/knowledge': typeof KnowledgeRoute
   '/reports': typeof ReportsRoute
+  '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/admin' | '/analyze' | '/knowledge' | '/reports'
+  fullPaths:
+    | '/'
+    | '/admin'
+    | '/analyze'
+    | '/knowledge'
+    | '/reports'
+    | '/reset-password'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/admin' | '/analyze' | '/knowledge' | '/reports'
-  id: '__root__' | '/' | '/admin' | '/analyze' | '/knowledge' | '/reports'
+  to:
+    | '/'
+    | '/admin'
+    | '/analyze'
+    | '/knowledge'
+    | '/reports'
+    | '/reset-password'
+  id:
+    | '__root__'
+    | '/'
+    | '/admin'
+    | '/analyze'
+    | '/knowledge'
+    | '/reports'
+    | '/reset-password'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -77,10 +105,18 @@ export interface RootRouteChildren {
   AnalyzeRoute: typeof AnalyzeRoute
   KnowledgeRoute: typeof KnowledgeRoute
   ReportsRoute: typeof ReportsRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reports': {
       id: '/reports'
       path: '/reports'
@@ -125,6 +161,7 @@ const rootRouteChildren: RootRouteChildren = {
   AnalyzeRoute: AnalyzeRoute,
   KnowledgeRoute: KnowledgeRoute,
   ReportsRoute: ReportsRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
