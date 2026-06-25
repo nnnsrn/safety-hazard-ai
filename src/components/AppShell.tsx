@@ -182,8 +182,6 @@ function AuthScreen() {
           {mode === "forgot" && <ForgotForm onBack={() => setMode("login")} />}
         </div>
 
-        <DemoCredentials />
-
         <p className="mt-4 text-center text-xs text-muted-foreground">
           The first account created becomes the system Administrator.
         </p>
