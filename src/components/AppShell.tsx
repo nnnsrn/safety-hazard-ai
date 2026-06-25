@@ -204,11 +204,7 @@ function LoginForm({ onForgot }: { onForgot: () => void }) {
     setBusy(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (!error) {
-      // Auto-seed demo accounts so any of the three demo users gets immediate access
-      try {
-        await supabase.rpc("seed_demo_accounts");
-        await refresh();
-      } catch {}
+      await refresh();
     }
     setBusy(false);
     if (error) setErr(error.message);
