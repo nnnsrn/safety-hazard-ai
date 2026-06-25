@@ -190,29 +190,6 @@ function AuthScreen() {
   );
 }
 
-function DemoCredentials() {
-  const accounts = [
-    { role: "Admin", email: "admin@ehss-ai.com", pass: "Admin123!" },
-    { role: "Manager", email: "manager@ehss-ai.com", pass: "Manager123!" },
-    { role: "Inspector", email: "inspector@ehss-ai.com", pass: "Inspector123!" },
-  ];
-  return (
-    <div className="mt-4 rounded-lg border border-border bg-card/50 p-3 text-xs">
-      <div className="mb-2 font-semibold uppercase tracking-wider text-muted-foreground">Demo accounts</div>
-      <ul className="space-y-1">
-        {accounts.map((a) => (
-          <li key={a.email} className="flex items-center justify-between gap-3 font-mono">
-            <span className="text-foreground">{a.email}</span>
-            <span className="text-muted-foreground">{a.pass}</span>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-2 text-[10px] text-muted-foreground">
-        Register each address once with the matching password; they activate automatically.
-      </p>
-    </div>
-  );
-}
 
 function LoginForm({ onForgot }: { onForgot: () => void }) {
   const { refresh } = useAuth();
