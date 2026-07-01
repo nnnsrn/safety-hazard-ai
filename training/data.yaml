@@ -1,0 +1,17 @@
+# SafetyVision-7 dataset descriptor
+# Move this file to training/dataset/data.yaml after preparing images.
+
+path: ./dataset           # relative to training/
+train: images/train
+val: images/val
+test: images/test
+
+nc: 7
+names:
+  0: person
+  1: helmet
+  2: safety_vest
+  3: wet_floor
+  4: blocked_walkway
+  5: exposed_cable
+  6: chemical_spill
