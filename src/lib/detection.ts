@@ -1,17 +1,27 @@
-// EHSS SafetyVision — 7-class detection pipeline
+// EHSS SafetyVision — real object detection
 // ---------------------------------------------------------------
-// The production model is a YOLOv11 network fine-tuned on the
-// SafetyVision-7 dataset (see /training/README.md) with 7 classes:
-//   0 person, 1 helmet, 2 safety_vest, 3 wet_floor,
-//   4 blocked_walkway, 5 exposed_cable, 6 chemical_spill
+// Uses TensorFlow.js COCO-SSD in the browser for REAL object
+// detection — no simulated / random boxes. Only objects that are
+// actually visible in the frame (with confidence >= threshold)
+// are drawn.
 //
-// In the browser preview we run TF.js COCO-SSD to lock onto real
-// people using the webcam, then overlay simulated bounding boxes
-// for the remaining 6 EHSS classes so the operator can preview the
-// dashboard, alerting, and reporting flows end-to-end without
-// needing to ship the 40 MB YOLO weights to every client.
-// The server-side inference path (edge/GPU worker) uses the real
-// best.pt weights — see training/train.py.
+// The 7-class EHSS taxonomy is:
+//   person, helmet, safety_vest, wet_floor,
+//   blocked_walkway, exposed_cable, chemical_spill
+//
+// COCO-SSD natively detects `person` and many common objects.
+// For the EHSS-specific classes (helmet, vest, wet_floor, spill,
+// exposed_cable, blocked_walkway) a purpose-trained YOLOv11 model
+// is required — see /training/README.md and train.py. Once
+// best.pt is exported to TFJS and dropped in
+// public/models/safetyvision7/, swap `loadModel()` below to load
+// it via tf.loadGraphModel and replace the `detect()` body with
+// the YOLO post-processing (NMS + class map). The UI, alerting,
+// and reporting layers already understand all 7 classes.
+//
+// Until that model is deployed, we ONLY show what COCO-SSD is
+// truly confident about (>= 0.6). Nothing is fabricated: if an
+// object isn't on screen, no box is drawn.
 
 import * as tf from "@tensorflow/tfjs";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
@@ -29,13 +39,13 @@ export const EHSS_CLASSES = [
 export type EhssClass = (typeof EHSS_CLASSES)[number];
 
 export const EHSS_CLASS_COLOR: Record<EhssClass, string> = {
-  person: "#E60012",           // Mattel red
-  helmet: "#F59E0B",           // amber
-  safety_vest: "#10B981",      // emerald
-  wet_floor: "#3B82F6",        // blue
-  blocked_walkway: "#8B5CF6",  // violet
-  exposed_cable: "#EF4444",    // red
-  chemical_spill: "#EC4899",   // pink
+  person: "#E60012",
+  helmet: "#F59E0B",
+  safety_vest: "#10B981",
+  wet_floor: "#3B82F6",
+  blocked_walkway: "#8B5CF6",
+  exposed_cable: "#EF4444",
+  chemical_spill: "#EC4899",
 };
 
 export const EHSS_CLASS_LABEL: Record<EhssClass, string> = {
@@ -48,10 +58,21 @@ export const EHSS_CLASS_LABEL: Record<EhssClass, string> = {
   chemical_spill: "Chemical Spill",
 };
 
+// Extra COCO classes we surface as generic-object detections so
+// operators still see real bounding boxes on non-EHSS items in the
+// scene (useful for context / walkway obstruction hints). These
+// are NOT mapped to hazards — they render with a neutral color and
+// their real COCO label.
+const COCO_CONTEXT_COLOR = "#0EA5E9";
+
+// Confidence threshold — anything below is ignored.
+const SCORE_THRESHOLD = 0.6;
+
 export type Detection = {
   class: EhssClass | string;
   score: number;
   bbox: [number, number, number, number]; // x, y, w, h in pixels
+  isHazard?: boolean;
 };
 
 let modelPromise: Promise<cocoSsd.ObjectDetection> | null = null;
@@ -60,118 +81,27 @@ export async function loadModel() {
   if (!modelPromise) {
     modelPromise = (async () => {
       await tf.ready();
-      return cocoSsd.load({ base: "lite_mobilenet_v2" });
+      // mobilenet_v2 is a bit slower than lite_mobilenet_v2 but
+      // materially more accurate — worth it for a safety tool.
+      return cocoSsd.load({ base: "mobilenet_v2" });
     })();
   }
   return modelPromise;
-}
-
-// ---------------------------------------------------------------
-// Simulated EHSS detections
-// ---------------------------------------------------------------
-// Rotates through the 6 non-person classes across frames so the
-// operator sees each class appear on the live feed, with realistic
-// confidence (0.80 – 0.98) matching the trained YOLOv11 model's
-// per-class validation accuracy.
-
-const SIM_CLASSES: EhssClass[] = [
-  "helmet",
-  "safety_vest",
-  "wet_floor",
-  "blocked_walkway",
-  "exposed_cable",
-  "chemical_spill",
-];
-
-type SimBox = {
-  class: EhssClass;
-  score: number;
-  // normalized 0..1 so we can rescale to any video size
-  nx: number;
-  ny: number;
-  nw: number;
-  nh: number;
-  vx: number;
-  vy: number;
-  ttl: number;
-};
-
-const simState: { boxes: SimBox[]; lastSpawn: number } = {
-  boxes: [],
-  lastSpawn: 0,
-};
-
-function rand(min: number, max: number) {
-  return min + Math.random() * (max - min);
-}
-
-function spawnSimBox(): SimBox {
-  const cls = SIM_CLASSES[Math.floor(Math.random() * SIM_CLASSES.length)];
-  // Helmet + vest tend to sit upper / mid frame; floor hazards low.
-  const lowFloor = cls === "wet_floor" || cls === "chemical_spill" || cls === "blocked_walkway";
-  const upper = cls === "helmet";
-  const nw = rand(0.14, 0.28);
-  const nh = rand(0.14, 0.26);
-  const nx = rand(0.05, 0.95 - nw);
-  const ny = upper ? rand(0.05, 0.3) : lowFloor ? rand(0.55, 0.95 - nh) : rand(0.2, 0.7 - nh);
-  return {
-    class: cls,
-    score: rand(0.8, 0.98),
-    nx,
-    ny,
-    nw,
-    nh,
-    vx: rand(-0.0015, 0.0015),
-    vy: rand(-0.0008, 0.0008),
-    ttl: Math.floor(rand(40, 110)), // frames
-  };
-}
-
-function stepSim(now: number): void {
-  // Spawn cadence: keep 2-4 hazard boxes on screen, refresh every ~1.5s.
-  if (simState.boxes.length < 2 || now - simState.lastSpawn > 1500) {
-    simState.boxes.push(spawnSimBox());
-    simState.lastSpawn = now;
-  }
-  // Cap total sim boxes to avoid clutter.
-  while (simState.boxes.length > 4) simState.boxes.shift();
-
-  for (const b of simState.boxes) {
-    b.nx = Math.max(0.02, Math.min(0.98 - b.nw, b.nx + b.vx));
-    b.ny = Math.max(0.02, Math.min(0.98 - b.nh, b.ny + b.vy));
-    b.ttl -= 1;
-  }
-  simState.boxes = simState.boxes.filter((b) => b.ttl > 0);
-}
-
-function simDetections(width: number, height: number): Detection[] {
-  return simState.boxes.map((b) => ({
-    class: b.class,
-    score: b.score,
-    bbox: [b.nx * width, b.ny * height, b.nw * width, b.nh * height],
-  }));
 }
 
 export async function detect(
   source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement,
 ): Promise<Detection[]> {
   const model = await loadModel();
-  const raw = await model.detect(source as HTMLImageElement);
+  const raw = await model.detect(source as HTMLImageElement, 20, SCORE_THRESHOLD);
 
-  // Keep only real "person" detections from COCO-SSD, rebrand rest as EHSS sim.
-  const people: Detection[] = raw
-    .filter((r) => r.class === "person")
-    .map((r) => ({
-      class: "person",
+  return raw
+    .filter((r) => r.score >= SCORE_THRESHOLD)
+    .map<Detection>((r) => ({
+      class: r.class === "person" ? "person" : r.class,
       score: r.score,
       bbox: r.bbox as [number, number, number, number],
     }));
-
-  const w = "videoWidth" in source ? source.videoWidth : source.width;
-  const h = "videoHeight" in source ? source.videoHeight : source.height;
-
-  stepSim(performance.now());
-  return [...people, ...simDetections(w, h)];
 }
 
 // ---------------------------------------------------------------
@@ -198,3 +128,5 @@ export function summarize(dets: Detection[]): DetectionSummary {
     );
   return { people, ppePresent, hazards, objects: dets.filter((d) => d.class !== "person") };
 }
+
+export { COCO_CONTEXT_COLOR };
