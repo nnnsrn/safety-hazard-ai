@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, CameraOff, Loader2, Aperture } from "lucide-react";
-import { detect, loadModel, type Detection } from "@/lib/detection";
+import {
+  detect,
+  loadModel,
+  EHSS_CLASS_COLOR,
+  EHSS_CLASS_LABEL,
+  type Detection,
+  type EhssClass,
+} from "@/lib/detection";
+
 
 type Props = {
   onCapture: (dataUrl: string, lastDetections: Detection[]) => void;
@@ -172,18 +180,20 @@ function drawOverlay(
 
   for (const d of dets) {
     const [x, y, w, h] = d.bbox;
-    const isPerson = d.class === "person";
-    const color = isPerson ? "#E60012" : "#0EA5E9";
+    const cls = d.class as EhssClass;
+    const color = EHSS_CLASS_COLOR[cls] ?? "#0EA5E9";
+    const label = `${EHSS_CLASS_LABEL[cls] ?? d.class} ${Math.round(d.score * 100)}%`;
+
     ctx.lineWidth = 3;
     ctx.strokeStyle = color;
     ctx.strokeRect(x, y, w, h);
 
-    const label = `${d.class} ${Math.round(d.score * 100)}%`;
     ctx.font = "bold 14px system-ui";
-    const tw = ctx.measureText(label).width + 10;
+    const tw = ctx.measureText(label).width + 12;
     ctx.fillStyle = color;
     ctx.fillRect(x, Math.max(0, y - 22), tw, 22);
     ctx.fillStyle = "#fff";
-    ctx.fillText(label, x + 5, Math.max(14, y - 6));
+    ctx.fillText(label, x + 6, Math.max(14, y - 6));
   }
 }
+
