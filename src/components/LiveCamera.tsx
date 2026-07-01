@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, CameraOff, Loader2, Aperture } from "lucide-react";
-import { detect, loadModel, type Detection } from "@/lib/detection";
+import {
+  detect,
+  loadModel,
+  EHSS_CLASS_COLOR,
+  EHSS_CLASS_LABEL,
+  type Detection,
+  type EhssClass,
+} from "@/lib/detection";
+
 
 type Props = {
   onCapture: (dataUrl: string, lastDetections: Detection[]) => void;
