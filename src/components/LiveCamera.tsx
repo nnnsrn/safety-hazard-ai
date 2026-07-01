@@ -5,6 +5,7 @@ import {
   loadModel,
   EHSS_CLASS_COLOR,
   EHSS_CLASS_LABEL,
+  COCO_CONTEXT_COLOR,
   type Detection,
   type EhssClass,
 } from "@/lib/detection";
@@ -181,8 +182,9 @@ function drawOverlay(
   for (const d of dets) {
     const [x, y, w, h] = d.bbox;
     const cls = d.class as EhssClass;
-    const color = EHSS_CLASS_COLOR[cls] ?? "#0EA5E9";
-    const label = `${EHSS_CLASS_LABEL[cls] ?? d.class} ${Math.round(d.score * 100)}%`;
+    const isEhss = cls in EHSS_CLASS_COLOR;
+    const color = isEhss ? EHSS_CLASS_COLOR[cls] : COCO_CONTEXT_COLOR;
+    const label = `${isEhss ? EHSS_CLASS_LABEL[cls] : d.class} ${Math.round(d.score * 100)}%`;
 
     ctx.lineWidth = 3;
     ctx.strokeStyle = color;
